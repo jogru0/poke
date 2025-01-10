@@ -1,13 +1,16 @@
 use anyhow::Context;
 use bitpatterns::bitpattern;
 use bitpatterns::is_bit_match;
-use instruction::{Instruction, Operation};
+use instruction::BinaryOperation;
+use instruction::Instruction;
+use instruction::JumpOperation;
 use std::{
     fmt::Display,
     fs::{read, write},
 };
 use thiserror::Error;
 
+#[derive(Debug)]
 enum Literal {
     Byte(i8),
     Word(i16),
@@ -23,6 +26,7 @@ impl Literal {
     }
 }
 
+#[derive(Debug)]
 enum Place {
     Register(Register),
     Immediate(Literal),
@@ -53,6 +57,7 @@ impl Place {
     }
 }
 
+#[derive(Debug)]
 enum Register {
     Al,
     Ax,
@@ -137,7 +142,20 @@ mod instruction {
 
     use super::Place;
 
-    impl Display for Instruction {
+    impl Display for JumpInstruction {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            // The jump is relative to the next instruction, so in the assembly,
+            // we have to add the two bytes this instruction takes.
+            let asm_offset = self.offset + 2;
+            if asm_offset < 0 {
+                write!(f, "{} ${}", self.operation, asm_offset)
+            } else {
+                write!(f, "{} $+{}", self.operation, asm_offset)
+            }
+        }
+    }
+
+    impl Display for BinaryInstruction {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let need_to_be_explicit = !(matches!(self.destination, Place::Register(_))
                 || matches!(self.source, Place::Register(_)));
@@ -151,32 +169,156 @@ mod instruction {
         }
     }
 
-    impl Display for Operation {
+    impl Display for BinaryOperation {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
-                Operation::Mov => write!(f, "mov"),
+                BinaryOperation::Mov => write!(f, "mov"),
+                BinaryOperation::Add => write!(f, "add"),
+                BinaryOperation::Sub => write!(f, "sub"),
+                BinaryOperation::Cmp => write!(f, "cmp"),
             }
         }
     }
 
-    pub struct Instruction {
-        operation: Operation,
+    #[derive(Debug)]
+    pub struct BinaryInstruction {
+        operation: BinaryOperation,
         destination: Place,
         source: Place,
     }
 
-    impl Instruction {
-        pub fn new(operation: Operation, destination: Place, source: Place) -> Self {
-            Instruction {
-                operation,
-                destination,
-                source,
+    #[derive(Debug)]
+    pub struct JumpInstruction {
+        operation: JumpOperation,
+        offset: i8,
+    }
+
+    #[derive(Debug)]
+    pub enum Instruction {
+        Binary(BinaryInstruction),
+        Jump(JumpInstruction),
+    }
+
+    impl Display for Instruction {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Instruction::Binary(binary) => write!(f, "{}", binary),
+                Instruction::Jump(jump) => write!(f, "{}", jump),
             }
         }
     }
 
-    pub enum Operation {
+    impl Instruction {
+        pub fn new_binary(operation: BinaryOperation, destination: Place, source: Place) -> Self {
+            Instruction::Binary(BinaryInstruction {
+                operation,
+                destination,
+                source,
+            })
+        }
+
+        pub fn new_jump(operation: JumpOperation, offset: i8) -> Self {
+            Instruction::Jump(JumpInstruction { operation, offset })
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum JumpOperation {
+        Je,
+        Jl,
+        Jle,
+        Jb,
+        Jbe,
+        Jp,
+        Jo,
+        Js,
+        Jne,
+        Jnl,
+        Jnle,
+        Jnb,
+        Jnbe,
+        Jnp,
+        Jno,
+        Jns,
+        Loop,
+        Loopz,
+        Loopnz,
+        Jcxz,
+    }
+
+    impl Display for JumpOperation {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                JumpOperation::Je => write!(f, "je"),
+                JumpOperation::Jl => write!(f, "jl"),
+                JumpOperation::Jle => write!(f, "jle"),
+                JumpOperation::Jb => write!(f, "jb"),
+                JumpOperation::Jbe => write!(f, "jbe"),
+                JumpOperation::Jp => write!(f, "jp"),
+                JumpOperation::Jo => write!(f, "jo"),
+                JumpOperation::Js => write!(f, "js"),
+                JumpOperation::Jne => write!(f, "jne"),
+                JumpOperation::Jnl => write!(f, "jnl"),
+                JumpOperation::Jnle => write!(f, "jnle"),
+                JumpOperation::Jnb => write!(f, "jnb"),
+                JumpOperation::Jnbe => write!(f, "jnbe"),
+                JumpOperation::Jnp => write!(f, "jnp"),
+                JumpOperation::Jno => write!(f, "jno"),
+                JumpOperation::Jns => write!(f, "jns"),
+                JumpOperation::Loop => write!(f, "loop"),
+                JumpOperation::Loopz => write!(f, "loopz"),
+                JumpOperation::Loopnz => write!(f, "loopnz"),
+                JumpOperation::Jcxz => write!(f, "jcxz"),
+            }
+        }
+    }
+
+    impl JumpOperation {
+        pub fn from(bits: u8) -> Self {
+            match bits {
+                0b01110100 => JumpOperation::Je,
+                0b01111100 => JumpOperation::Jl,
+                0b01111110 => JumpOperation::Jle,
+                0b01110010 => JumpOperation::Jb,
+                0b01110110 => JumpOperation::Jbe,
+                0b01111010 => JumpOperation::Jp,
+                0b01110000 => JumpOperation::Jo,
+                0b01111000 => JumpOperation::Js,
+                0b01110101 => JumpOperation::Jne,
+                0b01111101 => JumpOperation::Jnl,
+                0b01111111 => JumpOperation::Jnle,
+                0b01110011 => JumpOperation::Jnb,
+                0b01110111 => JumpOperation::Jnbe,
+                0b01111011 => JumpOperation::Jnp,
+                0b01110001 => JumpOperation::Jno,
+                0b01111001 => JumpOperation::Jns,
+                0b11100010 => JumpOperation::Loop,
+                0b11100001 => JumpOperation::Loopz,
+                0b11100000 => JumpOperation::Loopnz,
+                0b11100011 => JumpOperation::Jcxz,
+
+                _ => unimplemented!("missing jump operation associated to {bits:08b}"),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum BinaryOperation {
         Mov,
+        Add,
+        Sub,
+        Cmp,
+    }
+
+    impl BinaryOperation {
+        pub fn from(bits: [bool; 3]) -> Self {
+            match bits {
+                [false, false, false] => BinaryOperation::Add,
+                [true, false, true] => BinaryOperation::Sub,
+                [true, true, true] => BinaryOperation::Cmp,
+                _ => unimplemented!("missing binary operation associated to {bits:?}"),
+            }
+        }
     }
 }
 
@@ -271,7 +413,7 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
             Mode::Memory { displacement } => {
                 let displacement = match displacement {
                     None => 0,
-                    Some(data_type) => self.expect_data(data_type)?,
+                    Some(data_type) => self.expect_i16(data_type)?,
                 };
 
                 let registers = r_or_m_to_registers_for_effective_address_calculation(r_or_m, mode);
@@ -304,7 +446,38 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
             (reg, r_or_m)
         };
 
-        Ok(Instruction::new(Operation::Mov, destination, source))
+        Ok(Instruction::new_binary(
+            BinaryOperation::Mov,
+            destination,
+            source,
+        ))
+    }
+
+    fn next_op_between_r_or_m_reg(
+        &mut self,
+        first_byte: u8,
+    ) -> Result<Instruction, MachineCodeError> {
+        let op = BinaryOperation::from(bit_slice::<3>(first_byte, 2));
+
+        let second_byte = self.expect_next()?;
+
+        let is_reg_destination = is_bit_set(first_byte, 6);
+        let data_type = self.get_data_type(first_byte, 7);
+
+        let mode = bit_slice::<2>(second_byte, 0);
+        let reg = bit_slice::<3>(second_byte, 2);
+        let r_or_m = bit_slice::<3>(second_byte, 5);
+
+        let reg = Place::from_reg(reg, data_type);
+        let r_or_m = self.calculate_place(mode, r_or_m, data_type)?;
+
+        let (source, destination) = if is_reg_destination {
+            (r_or_m, reg)
+        } else {
+            (reg, r_or_m)
+        };
+
+        Ok(Instruction::new_binary(op, destination, source))
     }
 
     fn next_mov_immediate_to_r_m(
@@ -322,9 +495,33 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
         let r_or_m = bit_slice::<3>(second_byte, 5);
 
         let destination = self.calculate_place(mode, r_or_m, data_type)?;
-        let source = Place::Immediate(self.expect_literal(data_type)?);
+        let source = Place::Immediate(self.expect_literal(data_type, false)?);
 
-        Ok(Instruction::new(Operation::Mov, destination, source))
+        Ok(Instruction::new_binary(
+            BinaryOperation::Mov,
+            destination,
+            source,
+        ))
+    }
+
+    fn next_op_immediate_to_r_m(
+        &mut self,
+        first_byte: u8,
+    ) -> Result<Instruction, MachineCodeError> {
+        let second_byte = self.expect_next()?;
+
+        let do_sign_extension_instead_of_expecting_high_bits = is_bit_set(first_byte, 6);
+        let data_type = self.get_data_type(first_byte, 7);
+        let op = BinaryOperation::from(bit_slice::<3>(second_byte, 2));
+        let mode = bit_slice::<2>(second_byte, 0);
+        let r_or_m = bit_slice::<3>(second_byte, 5);
+
+        let destination = self.calculate_place(mode, r_or_m, data_type)?;
+        let source = Place::Immediate(
+            self.expect_literal(data_type, do_sign_extension_instead_of_expecting_high_bits)?,
+        );
+
+        Ok(Instruction::new_binary(op, destination, source))
     }
 
     fn next_mov_immediate_to_reg(
@@ -335,8 +532,12 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
         let reg = bit_slice::<3>(first_byte, 5);
 
         let destination = Place::from_reg(reg, data_type);
-        let source = Place::Immediate(self.expect_literal(data_type)?);
-        Ok(Instruction::new(Operation::Mov, destination, source))
+        let source = Place::Immediate(self.expect_literal(data_type, false)?);
+        Ok(Instruction::new_binary(
+            BinaryOperation::Mov,
+            destination,
+            source,
+        ))
     }
 
     fn next_mov_between_acc_memory(
@@ -347,7 +548,7 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
 
         let data_type = self.get_data_type(first_byte, 7);
         let acc = Place::Register(Register::accumulator(data_type));
-        let memory = Place::Memory(None, self.expect_data(DataType::Word)?);
+        let memory = Place::Memory(None, self.expect_i16(DataType::Word)?);
 
         let (destination, source) = if is_memory_destination {
             (memory, acc)
@@ -355,7 +556,24 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
             (acc, memory)
         };
 
-        Ok(Instruction::new(Operation::Mov, destination, source))
+        Ok(Instruction::new_binary(
+            BinaryOperation::Mov,
+            destination,
+            source,
+        ))
+    }
+
+    fn next_op_immediate_to_acc(
+        &mut self,
+        first_byte: u8,
+    ) -> Result<Instruction, MachineCodeError> {
+        let op = BinaryOperation::from(bit_slice::<3>(first_byte, 2));
+        let data_type = self.get_data_type(first_byte, 7);
+
+        let acc = Place::Register(Register::accumulator(data_type));
+        let immediate = Place::Immediate(self.expect_literal(data_type, false)?);
+
+        Ok(Instruction::new_binary(op, acc, immediate))
     }
 
     fn expect_next(&mut self) -> Result<u8, MachineCodeError> {
@@ -365,16 +583,31 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
             .ok_or(MachineCodeError::UnexpectedEnd)
     }
 
-    fn expect_literal(&mut self, data_type: DataType) -> Result<Literal, MachineCodeError> {
+    fn expect_literal(
+        &mut self,
+        data_type: DataType,
+        do_sign_extension_instead_of_expecting_high_bits: bool,
+    ) -> Result<Literal, MachineCodeError> {
         let low = self.expect_next()?;
 
         match data_type {
             DataType::Byte => Ok(Literal::Byte(low as i8)),
             DataType::Word => {
-                let high = self.expect_next()? as i16;
-                Ok(Literal::Word(low as i16 | (high << 8)))
+                let word = if do_sign_extension_instead_of_expecting_high_bits {
+                    low as i16
+                } else {
+                    let high = self.expect_next()? as i16;
+                    low as i16 | (high << 8)
+                };
+                Ok(Literal::Word(word))
             }
         }
+    }
+
+    fn next_op_jump(&mut self, first_byte: u8) -> Result<Instruction, MachineCodeError> {
+        let op = JumpOperation::from(first_byte);
+        let offset = self.expect_i8()?;
+        Ok(Instruction::new_jump(op, offset))
     }
 
     fn next_impl(&mut self, first_byte: u8) -> Result<Instruction, MachineCodeError> {
@@ -394,14 +627,30 @@ impl<'a, I: Iterator<Item = &'a u8>> InstructionIterator<'a, I> {
             return self.next_mov_between_acc_memory(first_byte);
         };
 
-        Err(MachineCodeError::UnexpectedPattern(first_byte))
+        if is_bit_match!("00...0..", first_byte) {
+            return self.next_op_between_r_or_m_reg(first_byte);
+        };
+
+        if is_bit_match!("100000..", first_byte) {
+            return self.next_op_immediate_to_r_m(first_byte);
+        };
+
+        if is_bit_match!("00...10.", first_byte) {
+            return self.next_op_immediate_to_acc(first_byte);
+        };
+
+        self.next_op_jump(first_byte)
     }
 
-    fn expect_data(&mut self, data_type: DataType) -> Result<i16, MachineCodeError> {
-        match self.expect_literal(data_type)? {
+    fn expect_i16(&mut self, data_type: DataType) -> Result<i16, MachineCodeError> {
+        match self.expect_literal(data_type, false)? {
             Literal::Byte(value) => Ok(value as i16),
             Literal::Word(value) => Ok(value),
         }
+    }
+
+    fn expect_i8(&mut self) -> Result<i8, MachineCodeError> {
+        Ok(self.expect_next()? as i8)
     }
 }
 
