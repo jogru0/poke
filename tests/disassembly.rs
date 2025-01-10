@@ -22,13 +22,13 @@ fn read_to_string_and_remove_fluff(path: &str) -> String {
 }
 
 static OUTPUT_DIR: LazyLock<&str> = LazyLock::new(|| {
-    let result = "out/part1";
+    let result = "out/disassembly";
     create_dir_all(result).expect("unable to create output directory for the tests");
     result
 });
 
 fn disassemble_test(name: &str) {
-    let input = format!("res/computer_enhance/part1/{}", name);
+    let input = format!("res/{}", name);
     let output = format!("{}/{}.asm", *OUTPUT_DIR, name);
     let expected = format!("{}.asm", input);
 
@@ -40,21 +40,11 @@ fn disassemble_test(name: &str) {
 }
 
 #[test]
-fn listing_0037_single_register_mov() {
-    disassemble_test("listing_0037_single_register_mov");
+fn mov_all_kinds_of_displacements() {
+    disassemble_test("mov_all_kinds_of_displacements");
 }
 
 #[test]
-fn listing_0038_many_register_mov() {
-    disassemble_test("listing_0038_many_register_mov");
-}
-
-#[test]
-fn listing_0039_more_movs() {
-    disassemble_test("listing_0039_more_movs");
-}
-
-#[test]
-fn listing_0040_challenge_movs() {
-    disassemble_test("listing_0040_challenge_movs");
+fn mov_immediate_accumulator() {
+    disassemble_test("mov_immediate_accumulator");
 }
