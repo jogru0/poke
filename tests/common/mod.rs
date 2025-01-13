@@ -1,4 +1,6 @@
-use poke::intel_8086::disassemble;
+#![allow(dead_code)]
+
+use poke::i8086::{disassemble, simulate};
 use pretty_assertions::assert_eq;
 use std::{
     fs::{read, read_to_string},
@@ -17,6 +19,17 @@ fn read_to_string_and_remove_fluff(path: &str) -> String {
         result += line;
         result.push('\n');
     }
+    result
+}
+
+fn read_to_string_and_unify_line_ending(path: &str) -> String {
+    let content = read_to_string(path).unwrap();
+
+    let mut result = String::new();
+    for line in content.lines() {
+        result += &format!("{}\n", line)
+    }
+
     result
 }
 
@@ -47,4 +60,18 @@ pub fn disassemble_test(name: &str, test_dir: &str, expect_to_reproduce_initial_
         let actual = read_to_string_and_remove_fluff(&disassembled);
         assert_eq!(expected, actual);
     }
+}
+
+pub fn simulate_test(name: &str, test_dir: &str, expect_to_reproduce_initial_asm: bool) {
+    disassemble_test(name, test_dir, expect_to_reproduce_initial_asm);
+
+    let initial_machine_code = format!("res/{}/{}", test_dir, name);
+    let expected_log = format!("{}.txt", initial_machine_code);
+    let actual_log = format!("out/{}/{}.txt", test_dir, name);
+
+    simulate(&initial_machine_code, &actual_log).unwrap();
+
+    let expected = read_to_string_and_unify_line_ending(&expected_log);
+    let actual = read_to_string_and_unify_line_ending(&actual_log);
+    assert_eq!(expected, actual);
 }

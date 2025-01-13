@@ -20,3 +20,8 @@ fn mov_all_kinds_of_displacements() {
 fn mov_immediate_accumulator() {
     disassemble_test("mov_immediate_accumulator", *TEST_DIR, true);
 }
+
+#[test]
+fn add_sign_extension() {
+    disassemble_test("add_sign_extension", *TEST_DIR, true);
+}

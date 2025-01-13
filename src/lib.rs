@@ -1,1 +1,1 @@
-pub mod intel_8086;
+pub mod i8086;
