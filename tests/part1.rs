@@ -50,3 +50,13 @@ fn listing_0044_register_movs() {
 fn listing_0045_challenge_register_movs() {
     simulate_test("listing_0045_challenge_register_movs", *TEST_DIR, false);
 }
+
+#[test]
+fn listing_0046_add_sub_cmp() {
+    simulate_test("listing_0046_add_sub_cmp", *TEST_DIR, false);
+}
+
+#[test]
+fn listing_0047_challenge_flags() {
+    simulate_test("listing_0047_challenge_flags", *TEST_DIR, true);
+}

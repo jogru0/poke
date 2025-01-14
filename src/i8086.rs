@@ -50,7 +50,13 @@ impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Place(place) => write!(f, "{place}"),
-            &Self::Immediate(value) => write!(f, "{}", value as u16),
+            &Self::Immediate(value) => {
+                if (-128..128).contains(&value) {
+                    write!(f, "{}", value)
+                } else {
+                    write!(f, "{}", value as u16)
+                }
+            }
         }
     }
 }
@@ -956,9 +962,17 @@ pub fn simulate(input_file: &str, log_file: &str) -> Result<(), anyhow::Error> {
         };
         let value = i8086.data_registers.get(register);
         if value != 0 {
-            log += &format!("      {}: 0x{:04x} ({})\n", register, value, value);
+            log += &format!(
+                "      {}: 0x{:04x} ({})\n",
+                register, value as u16, value as u16
+            );
         }
     }
+
+    if i8086.flags != Flags::default() {
+        log += &format!("   flags: {}\n", i8086.flags);
+    }
+
     log += "\n";
 
     write(log_file, log).with_context(|| format!("could not write file {log_file:?}"))?;
@@ -973,12 +987,37 @@ struct I8086 {
     instruction_pointer: u16,
 }
 
-fn do_op(destination: u32, source: u32, operation: BinaryOperation) -> u32 {
+fn do_op_impl(destination: i32, source: i32, operation: BinaryOperation) -> i32 {
     match operation {
         BinaryOperation::Mov => source,
         BinaryOperation::Add => destination + source,
         BinaryOperation::Sub | BinaryOperation::Cmp => destination - source,
     }
+}
+
+fn do_op(destination: i32, source: i32, operation: BinaryOperation) -> (i32, bool, bool) {
+    let res = match operation {
+        BinaryOperation::Mov => source,
+        BinaryOperation::Add => destination + source,
+        BinaryOperation::Sub | BinaryOperation::Cmp => destination - source,
+    };
+
+    let nibble_op = do_op_impl(
+        (destination as u32 % 0x10) as i32,
+        (source as u32 % 0x10) as i32,
+        operation,
+    );
+
+    let word_op = do_op_impl(
+        (destination as u32 % 0x10000) as i32,
+        (source as u32 % 0x10000) as i32,
+        operation,
+    );
+
+    let auxiliary_carry = nibble_op >> 4 != 0;
+    let carry = word_op >> 16 != 0;
+
+    (res, auxiliary_carry, carry)
 }
 
 enum Status {
@@ -990,14 +1029,7 @@ impl I8086 {
     fn new(machine_code: Vec<u8>) -> Self {
         let mut result = Self {
             data_registers: Registers { data: [0; 24] },
-            flags: Flags {
-                auxuliary_carry: false,
-                carry: false,
-                overflow: false,
-                sign: false,
-                parity: false,
-                zero: false,
-            },
+            flags: Flags::default(),
             memory: Memory { data: [0; 65536] },
             instruction_pointer: 0,
         };
@@ -1031,33 +1063,71 @@ impl I8086 {
         binary_instruction: BinaryInstruction,
         log: &mut String,
     ) -> Result<(), anyhow::Error> {
+        //TODO: property of a Place?
         let data_type = binary_instruction.data_type();
 
         let place_to_log = binary_instruction.destination().to_word();
-        let old_to_log = self.get_value(Value::Place(place_to_log), DataType::Word);
+        let old_to_log = self.get_value(Value::Place(place_to_log), DataType::Word) as i16;
 
         let old = self.get_value(Value::Place(binary_instruction.destination()), data_type);
-        let new = do_op(
-            old,
-            self.get_value(binary_instruction.source(), data_type),
-            binary_instruction.operation(),
-        );
+
+        let source = self.get_value(binary_instruction.source(), data_type);
+
+        let (signed_new, auxilary_carry, carry_flag) =
+            do_op(old, source, binary_instruction.operation());
+
+        // *log += &format!(
+        //     "do_op({}, {}, {}) ",
+        //     old,
+        //     source,
+        //     binary_instruction.operation()
+        // );
 
         if !matches!(binary_instruction.operation(), BinaryOperation::Cmp) {
-            self.set_place(binary_instruction.destination(), data_type, new);
+            self.set_place(binary_instruction.destination(), data_type, signed_new);
             let place_to_log = binary_instruction.destination().to_word();
             *log += &format!(
-                "{}:{:#x}->{:#x} \n",
+                "{}:{:#x}->{:#x} ",
                 place_to_log,
                 old_to_log,
-                self.get_value(Value::Place(place_to_log), DataType::Word)
+                self.get_value(Value::Place(place_to_log), DataType::Word) as i16
             );
         };
 
         if !matches!(binary_instruction.operation(), BinaryOperation::Mov) {
-            todo!()
+            let tamed_signed_new = match data_type {
+                DataType::Byte => signed_new as i8 as i32,
+                DataType::Word => signed_new as i16 as i32,
+            };
+
+            let unsigned_new = signed_new as u32;
+            let tamed_unsigned_new = match data_type {
+                DataType::Byte => unsigned_new as u8 as u32,
+                DataType::Word => unsigned_new as u16 as u32,
+            };
+
+            // *log += &format!(
+            //     "[[[old: {}, new: {}, tamed_new: {}]]] ",
+            //     old as u16, unsigned_new, tamed_unsigned_new
+            // );
+
+            let flags_before = self.flags;
+
+            self.flags.carry = carry_flag;
+            self.flags.zero = tamed_unsigned_new == 0;
+            self.flags.sign = tamed_signed_new < 0;
+            self.flags.overflow = tamed_signed_new != signed_new;
+            self.flags.auxuliary_carry = auxilary_carry;
+            self.flags.parity = (tamed_unsigned_new % 0x100).count_ones() % 2 == 0;
+
+            let flags_after = self.flags;
+
+            if flags_before != flags_after {
+                *log += &format!("flags:{}->{} ", flags_before, flags_after);
+            }
         }
 
+        *log += "\n";
         Ok(())
     }
 
@@ -1095,17 +1165,17 @@ impl I8086 {
             + memory_place.displacement
     }
 
-    fn get_value(&self, source: Value, data_type: DataType) -> u32 {
+    fn get_value(&self, source: Value, data_type: DataType) -> i32 {
         match source {
             Value::Place(Place::Memory(memory_place)) => {
                 self.memory.get(self.get_address(memory_place), data_type)
             }
-            Value::Immediate(literal) => literal as u32,
+            Value::Immediate(literal) => literal as i32,
             Value::Place(Place::Register(register)) => self.data_registers.get(register),
         }
     }
 
-    fn set_place(&mut self, destination: Place, data_type: DataType, res: u32) {
+    fn set_place(&mut self, destination: Place, data_type: DataType, res: i32) {
         match destination {
             Place::Register(register) => self.data_registers.set(register, res),
             Place::Memory(memory_place) => {
@@ -1120,18 +1190,18 @@ struct Memory {
     data: [u8; 65536],
 }
 impl Memory {
-    fn get(&self, address: i16, data_type: DataType) -> u32 {
+    fn get(&self, address: i16, data_type: DataType) -> i32 {
         let high = self.data[address as usize] as u32;
         match data_type {
-            DataType::Byte => high,
+            DataType::Byte => high as i32,
             DataType::Word => {
                 let low = self.data[(address + 1) as usize] as u32;
-                low | (high << 8)
+                (low | (high << 8)) as i32
             }
         }
     }
 
-    fn set(&mut self, address: i16, res: u32, data_type: DataType) {
+    fn set(&mut self, address: i16, res: i32, data_type: DataType) {
         let low = res as u8;
         match data_type {
             DataType::Byte => {
@@ -1150,19 +1220,19 @@ struct Registers {
     data: [u8; 24],
 }
 impl Registers {
-    fn get(&self, register: Register) -> u32 {
+    fn get(&self, register: Register) -> i32 {
         match register.data_type {
-            DataType::Byte => self.data[register.id] as u32,
+            DataType::Byte => self.data[register.id] as i32,
             DataType::Word => {
                 let id = register.id * 2;
-                let high: u32 = self.data[id] as u32;
-                let low = self.data[id + 1] as u32;
-                low | (high << 8)
+                let high = self.data[id] as u16;
+                let low = self.data[id + 1] as u16;
+                (low | (high << 8)) as i16 as i32
             }
         }
     }
 
-    fn set(&mut self, register: Register, res: u32) {
+    fn set(&mut self, register: Register, res: i32) {
         match register.data_type {
             DataType::Byte => self.data[register.id] = res as u8,
             DataType::Word => {
@@ -1176,6 +1246,7 @@ impl Registers {
     }
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Default)]
 struct Flags {
     auxuliary_carry: bool,
     carry: bool,
@@ -1183,4 +1254,34 @@ struct Flags {
     sign: bool,
     parity: bool,
     zero: bool,
+}
+
+impl Display for Flags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.carry {
+            write!(f, "C")?;
+        }
+
+        if self.parity {
+            write!(f, "P")?;
+        }
+
+        if self.auxuliary_carry {
+            write!(f, "A")?;
+        }
+
+        if self.sign {
+            write!(f, "S")?;
+        }
+
+        if self.overflow {
+            write!(f, "O")?;
+        }
+
+        if self.zero {
+            write!(f, "Z")?;
+        }
+
+        Ok(())
+    }
 }
