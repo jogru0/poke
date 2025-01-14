@@ -29,7 +29,7 @@ fn listing_0039_more_movs() {
 
 #[test]
 fn listing_0040_challenge_movs() {
-    disassemble_test("listing_0040_challenge_movs", *TEST_DIR, true);
+    disassemble_test("listing_0040_challenge_movs", *TEST_DIR, false);
 }
 
 #[test]
@@ -111,6 +111,36 @@ fn listing_0049_conditional_jumps() {
 fn listing_0050_challenge_jumps() {
     simulate_test(
         "listing_0050_challenge_jumps",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(true),
+    );
+}
+
+#[test]
+fn listing_0051_memory_mov() {
+    simulate_test(
+        "listing_0051_memory_mov",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(true),
+    );
+}
+
+#[test]
+fn listing_0052_memory_add_loop() {
+    simulate_test(
+        "listing_0052_memory_add_loop",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(true),
+    );
+}
+
+#[test]
+fn listing_0053_add_loop_challenge() {
+    simulate_test(
+        "listing_0053_add_loop_challenge",
         *TEST_DIR,
         false,
         SimulateLogOptions::new(true),

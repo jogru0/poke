@@ -50,9 +50,9 @@ impl Display for MemoryPlace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fn format_on_rhs(displacement: &i16) -> String {
             match displacement {
-                ..0 => format!(" - {}", -displacement),
+                ..0 => format!("-{}", -displacement),
                 0 => String::new(),
-                1.. => format!(" + {}", displacement),
+                1.. => format!("+{}", displacement),
             }
         }
 
@@ -60,7 +60,7 @@ impl Display for MemoryPlace {
             Self {
                 registers: None,
                 displacement,
-            } => write!(f, "{}", displacement),
+            } => write!(f, "{}", format_on_rhs(displacement)),
             Self {
                 registers: Some((register, None)),
                 displacement,
@@ -68,7 +68,7 @@ impl Display for MemoryPlace {
             Self {
                 registers: Some((reg_a, Some(reg_b))),
                 displacement,
-            } => write!(f, "{} + {}{}", reg_a, reg_b, format_on_rhs(displacement)),
+            } => write!(f, "{}+{}{}", reg_a, reg_b, format_on_rhs(displacement)),
         }
     }
 }
@@ -288,7 +288,8 @@ mod instruction {
         impl Display for BinaryInstruction {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 let need_to_be_explicit = !(matches!(self.destination, Place::Register(_))
-                    || matches!(self.source, Value::Place(Place::Register(_))));
+                    || matches!(self.source, Value::Place(Place::Register(_))))
+                    || matches!(self.destination, Place::Memory(_));
 
                 let explicit_data_type = if need_to_be_explicit {
                     match self.data_type {
@@ -300,8 +301,8 @@ mod instruction {
                 };
                 write!(
                     f,
-                    "{} {}, {}{}",
-                    self.operation, self.destination, explicit_data_type, self.source
+                    "{} {}{}, {}",
+                    self.operation, explicit_data_type, self.destination, self.source
                 )
             }
         }
