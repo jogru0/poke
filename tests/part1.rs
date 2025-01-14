@@ -1,5 +1,6 @@
 use common::disassemble_test;
 use common::simulate_test;
+use poke::i8086::SimulateLogOptions;
 use std::{fs::create_dir_all, sync::LazyLock};
 
 mod common;
@@ -38,25 +39,80 @@ fn listing_0041_add_sub_cmp_jnz() {
 
 #[test]
 fn listing_0043_immediate_movs() {
-    simulate_test("listing_0043_immediate_movs", *TEST_DIR, true);
+    simulate_test(
+        "listing_0043_immediate_movs",
+        *TEST_DIR,
+        true,
+        SimulateLogOptions::new(false),
+    );
 }
 
 #[test]
 fn listing_0044_register_movs() {
-    simulate_test("listing_0044_register_movs", *TEST_DIR, true);
+    simulate_test(
+        "listing_0044_register_movs",
+        *TEST_DIR,
+        true,
+        SimulateLogOptions::new(false),
+    );
 }
 
 #[test]
 fn listing_0045_challenge_register_movs() {
-    simulate_test("listing_0045_challenge_register_movs", *TEST_DIR, false);
+    simulate_test(
+        "listing_0045_challenge_register_movs",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(false),
+    );
 }
 
 #[test]
 fn listing_0046_add_sub_cmp() {
-    simulate_test("listing_0046_add_sub_cmp", *TEST_DIR, false);
+    simulate_test(
+        "listing_0046_add_sub_cmp",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(false),
+    );
 }
 
 #[test]
 fn listing_0047_challenge_flags() {
-    simulate_test("listing_0047_challenge_flags", *TEST_DIR, true);
+    simulate_test(
+        "listing_0047_challenge_flags",
+        *TEST_DIR,
+        true,
+        SimulateLogOptions::new(false),
+    );
+}
+
+#[test]
+fn listing_0048_ip_register() {
+    simulate_test(
+        "listing_0048_ip_register",
+        *TEST_DIR,
+        true,
+        SimulateLogOptions::new(true),
+    );
+}
+
+#[test]
+fn listing_0049_conditional_jumps() {
+    simulate_test(
+        "listing_0049_conditional_jumps",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(true),
+    );
+}
+
+#[test]
+fn listing_0050_challenge_jumps() {
+    simulate_test(
+        "listing_0050_challenge_jumps",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(true),
+    );
 }

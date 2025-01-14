@@ -24,21 +24,6 @@ enum Place {
     Register(Register),
     Memory(MemoryPlace),
 }
-impl Place {
-    fn to_word(mut self) -> Self {
-        match &mut self {
-            Self::Register(reg) => match reg.data_type {
-                DataType::Byte => {
-                    reg.data_type = DataType::Word;
-                    reg.id /= 2;
-                }
-                DataType::Word => {}
-            },
-            Self::Memory(_) => {}
-        };
-        self
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 enum Value {
@@ -372,7 +357,17 @@ mod instruction {
     #[derive(Debug)]
     pub struct JumpInstruction {
         operation: JumpOperation,
-        offset: i8,
+        offset: i16,
+    }
+
+    impl JumpInstruction {
+        pub fn operation(&self) -> JumpOperation {
+            self.operation
+        }
+
+        pub fn offset(&self) -> i16 {
+            self.offset
+        }
     }
 
     #[derive(Debug)]
@@ -408,11 +403,14 @@ mod instruction {
         }
 
         pub fn new_jump(operation: JumpOperation, offset: i8) -> Self {
-            Instruction::Jump(JumpInstruction { operation, offset })
+            Instruction::Jump(JumpInstruction {
+                operation,
+                offset: offset as i16,
+            })
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone, Copy)]
     pub enum JumpOperation {
         Je,
         Jl,
@@ -940,21 +938,59 @@ pub fn disassemble(input_file: &str, output_file: &str) -> Result<(), anyhow::Er
     Ok(())
 }
 
-pub fn simulate(input_file: &str, log_file: &str) -> Result<(), anyhow::Error> {
+#[derive(Clone, Copy)]
+pub struct SimulateLogOptions {
+    log_ip: bool,
+}
+
+impl SimulateLogOptions {
+    pub fn new(log_ip: bool) -> Self {
+        Self { log_ip }
+    }
+}
+
+pub struct LogContext {
+    log: String,
+    options: SimulateLogOptions,
+}
+
+impl LogContext {
+    pub fn new(options: SimulateLogOptions) -> Self {
+        Self {
+            log: String::new(),
+            options,
+        }
+    }
+
+    pub fn log(&mut self, message: &str) {
+        self.log += message;
+    }
+}
+
+pub fn simulate(
+    input_file: &str,
+    log_file: &str,
+    log_options: SimulateLogOptions,
+) -> Result<(), anyhow::Error> {
     let machine_code =
         read(input_file).with_context(|| format!("could not read file {input_file:?}"))?;
 
     let mut i8086 = I8086::new(machine_code);
 
+    let mut log_context = LogContext::new(log_options);
+
     //TODO unwrap
-    let mut log = format!(
+    log_context.log(&format!(
         "--- test\\{} execution ---\n",
         Path::new(input_file).file_name().unwrap().to_str().unwrap()
-    );
+    ));
 
-    while matches!(i8086.execute_next_instruction(&mut log)?, Status::Running) {}
+    while matches!(
+        i8086.execute_next_instruction(&mut log_context)?,
+        Status::Running
+    ) {}
 
-    log += "\nFinal registers:\n";
+    log_context.log("\nFinal registers:\n");
     for id in 0..12 {
         let register = Register {
             id,
@@ -962,20 +998,28 @@ pub fn simulate(input_file: &str, log_file: &str) -> Result<(), anyhow::Error> {
         };
         let value = i8086.data_registers.get(register);
         if value != 0 {
-            log += &format!(
+            log_context.log(&format!(
                 "      {}: 0x{:04x} ({})\n",
                 register, value as u16, value as u16
-            );
+            ));
         }
     }
 
-    if i8086.flags != Flags::default() {
-        log += &format!("   flags: {}\n", i8086.flags);
+    if log_context.options.log_ip {
+        log_context.log(&format!(
+            "      ip: 0x{:04x} ({})\n",
+            i8086.instruction_pointer, i8086.instruction_pointer
+        ));
     }
 
-    log += "\n";
+    if i8086.flags != Flags::default() {
+        log_context.log(&format!("   flags: {}\n", i8086.flags));
+    }
 
-    write(log_file, log).with_context(|| format!("could not write file {log_file:?}"))?;
+    log_context.log("\n");
+
+    write(log_file, log_context.log)
+        .with_context(|| format!("could not write file {log_file:?}"))?;
 
     Ok(())
 }
@@ -1048,26 +1092,29 @@ impl I8086 {
         Ok(instruction)
     }
 
-    fn execute_next_instruction(&mut self, log: &mut String) -> Result<Status, anyhow::Error> {
+    fn execute_next_instruction(
+        &mut self,
+        log_context: &mut LogContext,
+    ) -> Result<Status, anyhow::Error> {
+        let old_ip = self.instruction_pointer;
         let instruction = self.read_next_instruction()?;
+        let instruction_size = self.instruction_pointer - old_ip;
 
-        if !matches!(instruction, Instruction::Halt) {
-            *log += &format!("{} ; ", instruction);
+        if matches!(instruction, Instruction::Halt) {
+            self.instruction_pointer -= instruction_size;
+        } else {
+            log_context.log(&format!("{} ; ", instruction));
         }
 
-        self.execute_instruction(instruction, log)
+        self.execute_instruction(instruction, log_context, instruction_size)
     }
 
     fn execute_binary_instruction(
         &mut self,
         binary_instruction: BinaryInstruction,
-        log: &mut String,
     ) -> Result<(), anyhow::Error> {
         //TODO: property of a Place?
         let data_type = binary_instruction.data_type();
-
-        let place_to_log = binary_instruction.destination().to_word();
-        let old_to_log = self.get_value(Value::Place(place_to_log), DataType::Word) as i16;
 
         let old = self.get_value(Value::Place(binary_instruction.destination()), data_type);
 
@@ -1076,22 +1123,8 @@ impl I8086 {
         let (signed_new, auxilary_carry, carry_flag) =
             do_op(old, source, binary_instruction.operation());
 
-        // *log += &format!(
-        //     "do_op({}, {}, {}) ",
-        //     old,
-        //     source,
-        //     binary_instruction.operation()
-        // );
-
         if !matches!(binary_instruction.operation(), BinaryOperation::Cmp) {
             self.set_place(binary_instruction.destination(), data_type, signed_new);
-            let place_to_log = binary_instruction.destination().to_word();
-            *log += &format!(
-                "{}:{:#x}->{:#x} ",
-                place_to_log,
-                old_to_log,
-                self.get_value(Value::Place(place_to_log), DataType::Word) as i16
-            );
         };
 
         if !matches!(binary_instruction.operation(), BinaryOperation::Mov) {
@@ -1106,55 +1139,97 @@ impl I8086 {
                 DataType::Word => unsigned_new as u16 as u32,
             };
 
-            // *log += &format!(
-            //     "[[[old: {}, new: {}, tamed_new: {}]]] ",
-            //     old as u16, unsigned_new, tamed_unsigned_new
-            // );
-
-            let flags_before = self.flags;
-
             self.flags.carry = carry_flag;
             self.flags.zero = tamed_unsigned_new == 0;
             self.flags.sign = tamed_signed_new < 0;
             self.flags.overflow = tamed_signed_new != signed_new;
             self.flags.auxuliary_carry = auxilary_carry;
             self.flags.parity = (tamed_unsigned_new % 0x100).count_ones() % 2 == 0;
-
-            let flags_after = self.flags;
-
-            if flags_before != flags_after {
-                *log += &format!("flags:{}->{} ", flags_before, flags_after);
-            }
         }
 
-        *log += "\n";
         Ok(())
     }
 
-    fn execute_jump_instruction(
-        &self,
-        jump_instruction: JumpInstruction,
-    ) -> Result<(), anyhow::Error> {
-        dbg!(jump_instruction);
-        todo!()
+    fn execute_jump_instruction(&mut self, jump_instruction: JumpInstruction) {
+        let do_jump = match jump_instruction.operation() {
+            JumpOperation::Je => self.flags.zero,
+            JumpOperation::Jl => !self.flags.sign && !self.flags.zero,
+            JumpOperation::Jle => todo!("Jle"),
+            JumpOperation::Jb => self.flags.sign,
+            JumpOperation::Jbe => todo!("Jbe"),
+            JumpOperation::Jp => self.flags.parity,
+            JumpOperation::Jo => self.flags.overflow,
+            JumpOperation::Js => self.flags.sign,
+            JumpOperation::Jne => !self.flags.zero,
+            JumpOperation::Jnl => todo!("Jnl"),
+            JumpOperation::Jnle => todo!("Jnle"),
+            JumpOperation::Jnb => todo!("Jnb"),
+            JumpOperation::Jnbe => todo!("Jnbe"),
+            JumpOperation::Jnp => todo!("Jnp"),
+            JumpOperation::Jno => todo!("Jno"),
+            JumpOperation::Jns => todo!("Jns"),
+            JumpOperation::Loop => todo!("Loop"),
+            JumpOperation::Loopz => todo!("Loopz"),
+            JumpOperation::Loopnz => self.data_registers.do_loop() != 0,
+            JumpOperation::Jcxz => todo!("Jcxz"),
+        };
+
+        if do_jump {
+            self.instruction_pointer = self
+                .instruction_pointer
+                .wrapping_add(jump_instruction.offset() as u16);
+        }
     }
 
     fn execute_instruction(
         &mut self,
         instruction: Instruction,
-        log: &mut String,
+        log_context: &mut LogContext,
+        instruction_size: u16,
     ) -> Result<Status, anyhow::Error> {
+        let registers_before = self.data_registers.clone();
+        let flags_before = self.flags;
+        let instruction_pointer_before = self.instruction_pointer - instruction_size;
+
         match instruction {
             Instruction::Binary(binary_instruction) => {
-                self.execute_binary_instruction(binary_instruction, log)?;
-                Ok(Status::Running)
+                self.execute_binary_instruction(binary_instruction)?;
             }
             Instruction::Jump(jump_instruction) => {
-                self.execute_jump_instruction(jump_instruction)?;
-                Ok(Status::Running)
+                self.execute_jump_instruction(jump_instruction);
             }
-            Instruction::Halt => Ok(Status::Halted),
+            Instruction::Halt => return Ok(Status::Halted),
+        };
+
+        for register_id in 0..12 {
+            let register = Register {
+                id: register_id,
+                data_type: DataType::Word,
+            };
+            let old = registers_before.get(register);
+            let new = self.data_registers.get(register);
+            if old != new {
+                log_context.log(&format!(
+                    "{}:{:#x}->{:#x} ",
+                    register, old as u16, new as u16
+                ));
+            }
         }
+
+        if log_context.options.log_ip {
+            log_context.log(&format!(
+                "ip:{:#x}->{:#x} ",
+                instruction_pointer_before, self.instruction_pointer
+            ));
+        }
+
+        if flags_before != self.flags {
+            log_context.log(&format!("flags:{}->{} ", flags_before, self.flags));
+        }
+
+        log_context.log("\n");
+
+        Ok(Status::Running)
     }
 
     fn get_address(&self, memory_place: MemoryPlace) -> i16 {
@@ -1216,10 +1291,17 @@ impl Memory {
     }
 }
 
+#[derive(Clone)]
 struct Registers {
     data: [u8; 24],
 }
 impl Registers {
+    fn do_loop(&mut self) -> i32 {
+        let count = self.get(Register::CX) - 1;
+        self.set(Register::CX, count);
+        count
+    }
+
     fn get(&self, register: Register) -> i32 {
         match register.data_type {
             DataType::Byte => self.data[register.id] as i32,

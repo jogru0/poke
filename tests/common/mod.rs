@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use poke::i8086::{disassemble, simulate};
+use poke::i8086::{disassemble, simulate, SimulateLogOptions};
 use pretty_assertions::assert_eq;
 use std::{
     fs::{read, read_to_string},
@@ -62,14 +62,19 @@ pub fn disassemble_test(name: &str, test_dir: &str, expect_to_reproduce_initial_
     }
 }
 
-pub fn simulate_test(name: &str, test_dir: &str, expect_to_reproduce_initial_asm: bool) {
+pub fn simulate_test(
+    name: &str,
+    test_dir: &str,
+    expect_to_reproduce_initial_asm: bool,
+    log_options: SimulateLogOptions,
+) {
     disassemble_test(name, test_dir, expect_to_reproduce_initial_asm);
 
     let initial_machine_code = format!("res/{}/{}", test_dir, name);
     let expected_log = format!("{}.txt", initial_machine_code);
     let actual_log = format!("out/{}/{}.txt", test_dir, name);
 
-    simulate(&initial_machine_code, &actual_log).unwrap();
+    simulate(&initial_machine_code, &actual_log, log_options).unwrap();
 
     let expected = read_to_string_and_unify_line_ending(&expected_log);
     let actual = read_to_string_and_unify_line_ending(&actual_log);
