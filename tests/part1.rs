@@ -146,3 +146,23 @@ fn listing_0053_add_loop_challenge() {
         SimulateLogOptions::new(true),
     );
 }
+
+#[test]
+fn listing_0054_draw_rectangle() {
+    simulate_test(
+        "listing_0054_draw_rectangle",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(true),
+    );
+}
+
+#[test]
+fn listing_0055_challenge_rectangle() {
+    simulate_test(
+        "listing_0055_challenge_rectangle",
+        *TEST_DIR,
+        false,
+        SimulateLogOptions::new(true),
+    );
+}

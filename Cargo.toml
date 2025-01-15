@@ -7,6 +7,3 @@ edition = "2021"
 anyhow = "1.0.95"
 bitpatterns = "0.1.1"
 thiserror = "2.0.10"
-
-[dev-dependencies]
-pretty_assertions = "1.4.1"

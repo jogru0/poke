@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
-use poke::i8086::{disassemble, simulate, SimulateLogOptions};
-use pretty_assertions::assert_eq;
+use poke::i8086::{disassemble, simulate, LogContext, SimulateLogOptions};
 use std::{
-    fs::{read, read_to_string},
+    fs::{read, read_to_string, File},
+    io::BufWriter,
     process::Command,
 };
 
@@ -74,9 +74,12 @@ pub fn simulate_test(
     let expected_log = format!("{}.txt", initial_machine_code);
     let actual_log = format!("out/{}/{}.txt", test_dir, name);
 
-    simulate(&initial_machine_code, &actual_log, log_options).unwrap();
+    let writer = BufWriter::new(File::create(&actual_log).unwrap());
+    let log_context = LogContext::new(Box::new(writer), log_options);
+
+    simulate(&initial_machine_code, log_context).unwrap();
 
     let expected = read_to_string_and_unify_line_ending(&expected_log);
     let actual = read_to_string_and_unify_line_ending(&actual_log);
-    assert_eq!(expected, actual);
+    assert!(expected == actual);
 }

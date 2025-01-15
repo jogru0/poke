@@ -6,6 +6,7 @@ use instruction::BinaryOperation;
 use instruction::Instruction;
 use instruction::JumpInstruction;
 use instruction::JumpOperation;
+use std::io::Write;
 use std::path::Path;
 use std::{
     fmt::Display,
@@ -616,7 +617,7 @@ impl<'a> MachineCodeReader<'a> {
             } => {
                 let displacement = match displacement {
                     None => 0,
-                    Some(data_type) => self.expect_i16(data_type)?,
+                    Some(data_type) => self.expect_displacement(data_type)?,
                 };
 
                 let registers = r_or_m_to_registers_for_effective_address_calculation(r_or_m, mode);
@@ -798,7 +799,7 @@ impl<'a> MachineCodeReader<'a> {
         let acc = Place::Register(Register::accumulator(data_type));
         let memory = Place::Memory(MemoryPlace {
             registers: None,
-            displacement: self.expect_i16(DataType::Word)?,
+            displacement: self.expect_displacement(DataType::Word)?,
         });
 
         let (destination, source) = if is_memory_destination {
@@ -843,7 +844,7 @@ impl<'a> MachineCodeReader<'a> {
     ) -> Result<i16, MachineCodeError> {
         let low = self.expect_next_byte()?;
         match data_type {
-            DataType::Byte => Ok(low as i8 as i16),
+            DataType::Byte => Ok(low as i16),
             DataType::Word => {
                 let word = if do_sign_extension_instead_of_expecting_high_bits {
                     low as i8 as i16
@@ -904,8 +905,12 @@ impl<'a> MachineCodeReader<'a> {
         self.next_op_jump(first_byte)
     }
 
-    fn expect_i16(&mut self, data_type: DataType) -> Result<i16, MachineCodeError> {
-        self.expect_literal(data_type, false)
+    fn expect_displacement(&mut self, data_type: DataType) -> Result<i16, MachineCodeError> {
+        let do_sign_extension_instead_of_expecting_high_bits = data_type == DataType::Byte;
+        self.expect_literal(
+            DataType::Word,
+            do_sign_extension_instead_of_expecting_high_bits,
+        )
     }
 
     fn expect_i8(&mut self) -> Result<i8, MachineCodeError> {
@@ -951,47 +956,38 @@ impl SimulateLogOptions {
 }
 
 pub struct LogContext {
-    log: String,
+    log: Box<dyn Write>,
     options: SimulateLogOptions,
 }
 
 impl LogContext {
-    pub fn new(options: SimulateLogOptions) -> Self {
-        Self {
-            log: String::new(),
-            options,
-        }
+    pub fn new(log: Box<dyn Write>, options: SimulateLogOptions) -> Self {
+        Self { log, options }
     }
 
-    pub fn log(&mut self, message: &str) {
-        self.log += message;
+    pub fn log(&mut self, message: &str) -> Result<(), std::io::Error> {
+        write!(self.log, "{message}")
     }
 }
 
-pub fn simulate(
-    input_file: &str,
-    log_file: &str,
-    log_options: SimulateLogOptions,
-) -> Result<(), anyhow::Error> {
+pub fn simulate(input_file: &str, mut log_context: LogContext) -> Result<Vec<u8>, anyhow::Error> {
     let machine_code =
         read(input_file).with_context(|| format!("could not read file {input_file:?}"))?;
 
     let mut i8086 = I8086::new(machine_code);
 
-    let mut log_context = LogContext::new(log_options);
-
     //TODO unwrap
     log_context.log(&format!(
         "--- test\\{} execution ---\n",
         Path::new(input_file).file_name().unwrap().to_str().unwrap()
-    ));
+    ))?;
 
     while matches!(
         i8086.execute_next_instruction(&mut log_context)?,
         Status::Running
     ) {}
 
-    log_context.log("\nFinal registers:\n");
+    log_context.log("\nFinal registers:\n")?;
     for id in 0..12 {
         let register = Register {
             id,
@@ -1002,7 +998,7 @@ pub fn simulate(
             log_context.log(&format!(
                 "      {}: 0x{:04x} ({})\n",
                 register, value as u16, value as u16
-            ));
+            ))?;
         }
     }
 
@@ -1010,19 +1006,15 @@ pub fn simulate(
         log_context.log(&format!(
             "      ip: 0x{:04x} ({})\n",
             i8086.instruction_pointer, i8086.instruction_pointer
-        ));
+        ))?;
     }
 
     if i8086.flags != Flags::default() {
-        log_context.log(&format!("   flags: {}\n", i8086.flags));
+        log_context.log(&format!("   flags: {}\n", i8086.flags))?;
     }
+    log_context.log("\n")?;
 
-    log_context.log("\n");
-
-    write(log_file, log_context.log)
-        .with_context(|| format!("could not write file {log_file:?}"))?;
-
-    Ok(())
+    Ok(i8086.memory.data.to_vec())
 }
 
 struct I8086 {
@@ -1104,7 +1096,7 @@ impl I8086 {
         if matches!(instruction, Instruction::Halt) {
             self.instruction_pointer -= instruction_size;
         } else {
-            log_context.log(&format!("{} ; ", instruction));
+            log_context.log(&format!("{} ; ", instruction))?;
         }
 
         self.execute_instruction(instruction, log_context, instruction_size)
@@ -1169,9 +1161,9 @@ impl I8086 {
             JumpOperation::Jnp => todo!("Jnp"),
             JumpOperation::Jno => todo!("Jno"),
             JumpOperation::Jns => todo!("Jns"),
-            JumpOperation::Loop => todo!("Loop"),
-            JumpOperation::Loopz => todo!("Loopz"),
-            JumpOperation::Loopnz => self.data_registers.do_loop() != 0,
+            JumpOperation::Loop => self.data_registers.do_loop(),
+            JumpOperation::Loopz => self.data_registers.do_loop() && self.flags.sign,
+            JumpOperation::Loopnz => self.data_registers.do_loop() && !self.flags.sign,
             JumpOperation::Jcxz => todo!("Jcxz"),
         };
 
@@ -1213,7 +1205,7 @@ impl I8086 {
                 log_context.log(&format!(
                     "{}:{:#x}->{:#x} ",
                     register, old as u16, new as u16
-                ));
+                ))?;
             }
         }
 
@@ -1221,14 +1213,14 @@ impl I8086 {
             log_context.log(&format!(
                 "ip:{:#x}->{:#x} ",
                 instruction_pointer_before, self.instruction_pointer
-            ));
+            ))?;
         }
 
         if flags_before != self.flags {
-            log_context.log(&format!("flags:{}->{} ", flags_before, self.flags));
+            log_context.log(&format!("flags:{}->{} ", flags_before, self.flags))?;
         }
 
-        log_context.log("\n");
+        log_context.log("\n")?;
 
         Ok(Status::Running)
     }
@@ -1265,13 +1257,14 @@ impl I8086 {
 struct Memory {
     data: [u8; 65536],
 }
+
 impl Memory {
     fn get(&self, address: i16, data_type: DataType) -> i32 {
-        let high = self.data[address as usize] as u32;
+        let low = self.data[address as usize] as u32;
         match data_type {
-            DataType::Byte => high as i32,
+            DataType::Byte => low as i32,
             DataType::Word => {
-                let low = self.data[(address + 1) as usize] as u32;
+                let high = self.data[(address + 1) as usize] as u32;
                 (low | (high << 8)) as i32
             }
         }
@@ -1279,14 +1272,12 @@ impl Memory {
 
     fn set(&mut self, address: i16, res: i32, data_type: DataType) {
         let low = res as u8;
+        self.data[address as usize] = low;
         match data_type {
-            DataType::Byte => {
-                self.data[address as usize] = low;
-            }
+            DataType::Byte => {}
             DataType::Word => {
                 let high = (res >> 8) as u8;
-                self.data[address as usize] = high;
-                self.data[(address + 1) as usize] = low;
+                self.data[(address + 1) as usize] = high;
             }
         }
     }
@@ -1297,10 +1288,10 @@ struct Registers {
     data: [u8; 24],
 }
 impl Registers {
-    fn do_loop(&mut self) -> i32 {
+    fn do_loop(&mut self) -> bool {
         let count = self.get(Register::CX) - 1;
         self.set(Register::CX, count);
-        count
+        count != 0
     }
 
     fn get(&self, register: Register) -> i32 {
