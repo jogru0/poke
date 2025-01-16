@@ -18,6 +18,38 @@ use thiserror::Error;
 struct MemoryPlace {
     registers: Option<(Register, Option<Register>)>,
     displacement: i16,
+    data_type: DataType,
+}
+impl MemoryPlace {
+    fn estimate_clocks(&self, clock_model: ClockModel) -> (u32, bool) {
+        let has_penalty = self.data_type == DataType::Word
+            && match clock_model {
+                ClockModel::I8086 => self.displacement % 2 != 0,
+                ClockModel::I8088 => true,
+            };
+
+        let Some((register_a, register_b)) = self.registers else {
+            return (6, has_penalty);
+        };
+
+        let displacement_bonus = if self.displacement != 0 { 4 } else { 0 };
+
+        let Some(register_b) = register_b else {
+            return (5 + displacement_bonus, has_penalty);
+        };
+
+        if register_a == Register::BP && register_b == Register::DI
+            || register_a == Register::BX && register_b == Register::SI
+        {
+            (7 + displacement_bonus, has_penalty)
+        } else if register_a == Register::BP && register_b == Register::SI
+            || register_a == Register::BX && register_b == Register::DI
+        {
+            (8 + displacement_bonus, has_penalty)
+        } else {
+            panic!("unexpected registers {register_a} + register_b");
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -61,14 +93,17 @@ impl Display for MemoryPlace {
             Self {
                 registers: None,
                 displacement,
+                data_type: _,
             } => write!(f, "{}", format_on_rhs(displacement)),
             Self {
                 registers: Some((register, None)),
                 displacement,
+                data_type: _,
             } => write!(f, "{}{}", register, format_on_rhs(displacement)),
             Self {
                 registers: Some((reg_a, Some(reg_b))),
                 displacement,
+                data_type: _,
             } => write!(f, "{}+{}{}", reg_a, reg_b, format_on_rhs(displacement)),
         }
     }
@@ -83,7 +118,7 @@ impl Display for Place {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Register {
     id: usize,
     data_type: DataType,
@@ -245,7 +280,7 @@ mod instruction {
 
     use binary_instruction::BinaryInstruction;
 
-    use super::{DataType, Place, Value};
+    use super::{ClockEstimate, ClockModel, DataType, Place, Value};
 
     impl Display for JumpInstruction {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -274,7 +309,7 @@ mod instruction {
     pub mod binary_instruction {
         use std::fmt::Display;
 
-        use crate::i8086::{DataType, Place, Value};
+        use crate::i8086::{ClockEstimate, ClockModel, DataType, Place, Value};
 
         use super::BinaryOperation;
 
@@ -353,6 +388,68 @@ mod instruction {
             pub(crate) fn operation(&self) -> BinaryOperation {
                 self.operation
             }
+
+            pub(crate) fn estimate_clocks(&self, clock_model: ClockModel) -> ClockEstimate {
+                let (basis, transfers) = self.estimate_clock_basis(clock_model);
+                let (effective_address, has_penalty) =
+                    self.estimate_clock_effective_address(clock_model);
+
+                let penality = if has_penalty {
+                    4 * transfers.expect("has penalty")
+                } else {
+                    0
+                };
+
+                ClockEstimate::new(basis, effective_address, penality)
+            }
+
+            fn estimate_clock_basis(&self, _clock_model: ClockModel) -> (u32, Option<u32>) {
+                match self.operation {
+                    BinaryOperation::Mov => match (self.destination, self.source) {
+                        (Place::Register(_), Value::Place(Place::Register(_))) => (2, None),
+                        (Place::Register(_), Value::Place(Place::Memory(_))) => (8, Some(1)),
+                        (Place::Register(_), Value::Immediate(_)) => (4, None),
+                        (Place::Memory(_), Value::Place(Place::Register(_))) => (9, Some(1)),
+                        (Place::Memory(_), Value::Place(Place::Memory(_))) => {
+                            panic!("memory to memory should not be possible")
+                        }
+                        (Place::Memory(_), Value::Immediate(_)) => {
+                            todo!()
+                        }
+                    },
+                    BinaryOperation::Add => match (self.destination, self.source) {
+                        (Place::Register(_), Value::Place(Place::Register(_))) => (3, None),
+                        (Place::Register(_), Value::Place(Place::Memory(_))) => (9, Some(1)),
+                        (Place::Register(_), Value::Immediate(_)) => (4, None),
+                        (Place::Memory(_), Value::Place(Place::Register(_))) => (16, Some(2)),
+                        (Place::Memory(_), Value::Place(Place::Memory(_))) => {
+                            panic!("memory to memory should not be possible")
+                        }
+                        (Place::Memory(_), Value::Immediate(_)) => (17, Some(2)),
+                    },
+                    BinaryOperation::Sub => todo!(),
+                    BinaryOperation::Cmp => todo!(),
+                }
+            }
+
+            fn estimate_clock_effective_address(&self, clock_model: ClockModel) -> (u32, bool) {
+                match (self.destination, self.source) {
+                    (Place::Register(_), Value::Place(Place::Register(_))) => (0, false),
+                    (Place::Register(_), Value::Place(Place::Memory(memory_place))) => {
+                        memory_place.estimate_clocks(clock_model)
+                    }
+                    (Place::Register(_), Value::Immediate(_)) => (0, false),
+                    (Place::Memory(memory_place), Value::Place(Place::Register(_))) => {
+                        memory_place.estimate_clocks(clock_model)
+                    }
+                    (Place::Memory(_), Value::Place(Place::Memory(_))) => {
+                        panic!("memory to memory should not be possible")
+                    }
+                    (Place::Memory(memory_place), Value::Immediate(_)) => {
+                        memory_place.estimate_clocks(clock_model)
+                    }
+                }
+            }
         }
     }
 
@@ -369,6 +466,10 @@ mod instruction {
 
         pub fn offset(&self) -> i16 {
             self.offset
+        }
+
+        fn estimate_clocks(&self, _clock_estimate: ClockModel) -> ClockEstimate {
+            todo!()
         }
     }
 
@@ -409,6 +510,18 @@ mod instruction {
                 operation,
                 offset: offset as i16,
             })
+        }
+
+        pub(crate) fn estimate_clocks(&self, clock_estimate: super::ClockModel) -> ClockEstimate {
+            match self {
+                Instruction::Binary(binary_instruction) => {
+                    binary_instruction.estimate_clocks(clock_estimate)
+                }
+                Instruction::Jump(jump_instruction) => {
+                    jump_instruction.estimate_clocks(clock_estimate)
+                }
+                Instruction::Halt => todo!(),
+            }
         }
     }
 
@@ -625,6 +738,7 @@ impl<'a> MachineCodeReader<'a> {
                 Ok(Place::Memory(MemoryPlace {
                     registers,
                     displacement,
+                    data_type,
                 }))
             }
             Mode::Register => Ok(Place::Register(Register::from_reg(r_or_m, data_type))),
@@ -800,6 +914,7 @@ impl<'a> MachineCodeReader<'a> {
         let memory = Place::Memory(MemoryPlace {
             registers: None,
             displacement: self.expect_displacement(DataType::Word)?,
+            data_type,
         });
 
         let (destination, source) = if is_memory_destination {
@@ -945,13 +1060,32 @@ pub fn disassemble(input_file: &str, output_file: &str) -> Result<(), anyhow::Er
 }
 
 #[derive(Clone, Copy)]
+pub enum ClockModel {
+    I8086,
+    I8088,
+}
+
+impl Display for ClockModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClockModel::I8086 => write!(f, "8086"),
+            ClockModel::I8088 => write!(f, "8088"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct SimulateLogOptions {
     log_ip: bool,
+    clock_model: Option<ClockModel>,
 }
 
 impl SimulateLogOptions {
-    pub fn new(log_ip: bool) -> Self {
-        Self { log_ip }
+    pub fn new(log_ip: bool, clock_estimate: Option<ClockModel>) -> Self {
+        Self {
+            log_ip,
+            clock_model: clock_estimate,
+        }
     }
 }
 
@@ -968,13 +1102,35 @@ impl LogContext {
     pub fn log(&mut self, message: &str) -> Result<(), std::io::Error> {
         write!(self.log, "{message}")
     }
+
+    pub fn set_clock_estimate(&mut self, clock_estimate: Option<ClockModel>) {
+        self.options.clock_model = clock_estimate;
+    }
+
+    pub fn flush(&mut self) -> Result<(), std::io::Error> {
+        self.log.flush()
+    }
 }
 
-pub fn simulate(input_file: &str, mut log_context: LogContext) -> Result<Vec<u8>, anyhow::Error> {
+pub fn simulate(input_file: &str, log_context: &mut LogContext) -> Result<Vec<u8>, anyhow::Error> {
     let machine_code =
         read(input_file).with_context(|| format!("could not read file {input_file:?}"))?;
 
     let mut i8086 = I8086::new(machine_code);
+
+    if let Some(clock_estimate) = log_context.options.clock_model {
+        log_context.log("**************\n")?;
+        log_context.log(&format!("**** {clock_estimate} ****\n"))?;
+        log_context.log("**************\n\n")?;
+        log_context
+            .log("WARNING: Clocks reported by this utility are strictly from the 8086 manual.\n")?;
+        log_context.log(
+            "They will be inaccurate, both because the manual clocks are estimates, and because\n",
+        )?;
+        log_context.log(
+            "some of the entries in the manual look highly suspicious and are probably typos.\n\n",
+        )?;
+    }
 
     //TODO unwrap
     log_context.log(&format!(
@@ -983,7 +1139,7 @@ pub fn simulate(input_file: &str, mut log_context: LogContext) -> Result<Vec<u8>
     ))?;
 
     while matches!(
-        i8086.execute_next_instruction(&mut log_context)?,
+        i8086.execute_next_instruction(log_context)?,
         Status::Running
     ) {}
 
@@ -1012,7 +1168,8 @@ pub fn simulate(input_file: &str, mut log_context: LogContext) -> Result<Vec<u8>
     if i8086.flags != Flags::default() {
         log_context.log(&format!("   flags: {}\n", i8086.flags))?;
     }
-    log_context.log("\n")?;
+
+    log_context.flush()?;
 
     Ok(i8086.memory.data.to_vec())
 }
@@ -1022,6 +1179,7 @@ struct I8086 {
     flags: Flags,
     memory: Memory,
     instruction_pointer: u16,
+    total_estimated_clocks: u32,
 }
 
 fn do_op_impl(destination: i32, source: i32, operation: BinaryOperation) -> i32 {
@@ -1069,6 +1227,7 @@ impl I8086 {
             flags: Flags::default(),
             memory: Memory { data: [0; 65536] },
             instruction_pointer: 0,
+            total_estimated_clocks: 0,
         };
 
         //TODO
@@ -1096,7 +1255,21 @@ impl I8086 {
         if matches!(instruction, Instruction::Halt) {
             self.instruction_pointer -= instruction_size;
         } else {
-            log_context.log(&format!("{} ; ", instruction))?;
+            log_context.log(&format!("{} ;", instruction))?;
+
+            if let Some(clock_estimate) = log_context.options.clock_model {
+                let estimated_clocks = instruction.estimate_clocks(clock_estimate);
+                self.total_estimated_clocks += estimated_clocks.total();
+                log_context.log(&format!(
+                    " Clocks: +{} = {}",
+                    estimated_clocks.total(),
+                    self.total_estimated_clocks
+                ))?;
+                if estimated_clocks.effective_address != 0 {
+                    log_context.log(&format!(" ({})", estimated_clocks))?;
+                }
+                log_context.log(" |")?;
+            }
         }
 
         self.execute_instruction(instruction, log_context, instruction_size)
@@ -1203,7 +1376,7 @@ impl I8086 {
             let new = self.data_registers.get(register);
             if old != new {
                 log_context.log(&format!(
-                    "{}:{:#x}->{:#x} ",
+                    " {}:{:#x}->{:#x}",
                     register, old as u16, new as u16
                 ))?;
             }
@@ -1211,13 +1384,17 @@ impl I8086 {
 
         if log_context.options.log_ip {
             log_context.log(&format!(
-                "ip:{:#x}->{:#x} ",
+                " ip:{:#x}->{:#x}",
                 instruction_pointer_before, self.instruction_pointer
             ))?;
         }
 
         if flags_before != self.flags {
-            log_context.log(&format!("flags:{}->{} ", flags_before, self.flags))?;
+            log_context.log(&format!(" flags:{}->{}", flags_before, self.flags))?;
+        }
+
+        if !matches!(log_context.options.clock_model, Some(ClockModel::I8088)) {
+            log_context.log(" ")?;
         }
 
         log_context.log("\n")?;
@@ -1354,6 +1531,48 @@ impl Display for Flags {
 
         if self.zero {
             write!(f, "Z")?;
+        }
+
+        Ok(())
+    }
+}
+
+struct ClockEstimate {
+    basis: u32,
+    effective_address: u32,
+    penalty: u32,
+}
+
+impl ClockEstimate {
+    pub fn new(basis: u32, effective_address: u32, penalty: u32) -> Self {
+        Self {
+            basis,
+            effective_address,
+            penalty,
+        }
+    }
+
+    fn total(&self) -> u32 {
+        let Self {
+            basis,
+            effective_address,
+            penalty,
+        } = self;
+        basis + effective_address + penalty
+    }
+}
+
+impl Display for ClockEstimate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let &Self {
+            basis,
+            effective_address,
+            penalty,
+        } = self;
+        write!(f, "{} + {}ea", basis, effective_address)?;
+
+        if penalty != 0 {
+            write!(f, " + {}p", penalty)?;
         }
 
         Ok(())

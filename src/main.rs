@@ -10,9 +10,9 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     let input_file = args.get(1).context("please provide an input file")?;
 
-    let log_context = LogContext::new(Box::new(sink()), SimulateLogOptions::new(true));
+    let mut log_context = LogContext::new(Box::new(sink()), SimulateLogOptions::new(true, None));
 
-    let memory = simulate(input_file, log_context)?;
+    let memory = simulate(input_file, &mut log_context)?;
 
     stdout().write_all(&memory)?;
 

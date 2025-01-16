@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
-use poke::i8086::{disassemble, simulate, LogContext, SimulateLogOptions};
+use poke::i8086::{
+    disassemble, simulate,
+    ClockModel::{self},
+    LogContext, SimulateLogOptions,
+};
 use std::{
     fs::{read, read_to_string, File},
     io::BufWriter,
@@ -66,7 +70,8 @@ pub fn simulate_test(
     name: &str,
     test_dir: &str,
     expect_to_reproduce_initial_asm: bool,
-    log_options: SimulateLogOptions,
+    log_ip: bool,
+    lock_clock_estimates: Option<usize>,
 ) {
     disassemble_test(name, test_dir, expect_to_reproduce_initial_asm);
 
@@ -75,9 +80,23 @@ pub fn simulate_test(
     let actual_log = format!("out/{}/{}.txt", test_dir, name);
 
     let writer = BufWriter::new(File::create(&actual_log).unwrap());
-    let log_context = LogContext::new(Box::new(writer), log_options);
+    let mut log_context = LogContext::new(Box::new(writer), SimulateLogOptions::new(log_ip, None));
 
-    simulate(&initial_machine_code, log_context).unwrap();
+    if let Some(extra_lines) = lock_clock_estimates {
+        log_context.set_clock_estimate(Some(ClockModel::I8086));
+        simulate(&initial_machine_code, &mut log_context).unwrap();
+
+        for _ in 0..extra_lines {
+            log_context.log("\n").unwrap();
+        }
+
+        log_context.set_clock_estimate(Some(ClockModel::I8088));
+        simulate(&initial_machine_code, &mut log_context).unwrap();
+    } else {
+        simulate(&initial_machine_code, &mut log_context).unwrap();
+        log_context.log("\n").unwrap();
+        log_context.flush().unwrap();
+    }
 
     let expected = read_to_string_and_unify_line_ending(&expected_log);
     let actual = read_to_string_and_unify_line_ending(&actual_log);
