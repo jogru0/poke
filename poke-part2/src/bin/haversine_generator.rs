@@ -1,12 +1,13 @@
 use anyhow::anyhow;
 use anyhow::Context;
-use poke::haversine::reference_haversine;
+use poke_part2::haversine::reference_haversine;
 use rand::distributions::Uniform;
 use rand::prelude::Distribution;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 use std::env;
+use std::fs::create_dir_all;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::Write;
@@ -91,6 +92,8 @@ fn main() -> anyhow::Result<()> {
     println!("Average: {}", average);
 
     let instances = Instances { pairs };
+
+    create_dir_all("out")?;
 
     let file = File::create("out/instances.json")?;
     let mut writer = BufWriter::new(file);

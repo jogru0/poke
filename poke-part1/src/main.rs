@@ -1,5 +1,5 @@
 use anyhow::Context;
-use poke::i8086::{simulate, LogContext, SimulateLogOptions};
+use poke_part1::i8086::{simulate, LogContext, SimulateLogOptions};
 use std::io::Write;
 use std::{
     env,

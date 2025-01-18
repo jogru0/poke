@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use poke::i8086::{
+use poke_part1::i8086::{
     disassemble, simulate,
     ClockModel::{self},
     LogContext, SimulateLogOptions,
