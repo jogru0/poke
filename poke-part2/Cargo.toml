@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.95"
 bitpatterns = "0.1.1"
+indexmap = "2.7.0"
+itertools = "0.14.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 serde = { version = "1.0.217", features = ["derive"] }
