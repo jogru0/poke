@@ -1,6 +1,9 @@
 use anyhow::bail;
 
-use crate::json::{JsonList, JsonNumber, JsonObject, JsonValue};
+use crate::{
+    json::{JsonList, JsonNumber, JsonObject, JsonValue},
+    profile_function,
+};
 
 pub struct HaversineInstance {
     pub x0: f64,
@@ -34,6 +37,7 @@ fn to_haversine_instance(json: &JsonValue) -> anyhow::Result<HaversineInstance> 
 }
 
 pub fn to_haversine_instances(json: &JsonValue) -> anyhow::Result<Vec<HaversineInstance>> {
+    profile_function!();
     let JsonValue::Object(JsonObject(dict)) = json else {
         bail!("");
     };

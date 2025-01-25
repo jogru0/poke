@@ -1,7 +1,9 @@
-use std::fs::read_to_string;
+use std::fs::{read_to_string, File};
 
 use indexmap::{map::Entry, IndexMap};
 use thiserror::Error;
+
+use crate::profile_scope;
 
 pub struct JsonNumber(pub f64);
 
@@ -132,6 +134,18 @@ fn parse_to_json_number(json_data: &mut &str) -> Result<JsonNumber, JsonError> {
 }
 
 pub fn load_json_file(path: &str) -> anyhow::Result<JsonValue> {
-    let json_data = read_to_string(path)?;
-    Ok(parse_to_json_root(&mut json_data.as_str())?)
+    let file = File::open(path)?;
+    let file_size = file.metadata().unwrap().len();
+
+    let json_data = {
+        profile_scope!("read_ro_string", file_size);
+        read_to_string(path)
+    }?;
+
+    assert_eq!(file_size as usize, json_data.len());
+
+    Ok({
+        profile_scope!("parse json", file_size);
+        parse_to_json_root(&mut json_data.as_str())
+    }?)
 }
