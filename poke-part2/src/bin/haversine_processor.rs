@@ -2,9 +2,9 @@ use std::fs::{read, File};
 
 use anyhow::{Context, Ok};
 use itertools::Itertools;
+use poke_instrument::{profile_main, profile_scope};
 use poke_part2::{
     haversine::reference_haversine, haversine_json::to_haversine_instances, json::load_json_file,
-    profile_main, profile_scope,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -44,8 +44,9 @@ fn main() -> anyhow::Result<()> {
     };
 
     let verification_bytes = {
-        let bytes = File::open(verification_file_name)?.metadata()?.len();
-        profile_scope!("read verification file", bytes);
+        let _bytes = File::open(verification_file_name)?.metadata()?.len();
+
+        profile_scope!("read verification file", _bytes);
         read(verification_file_name)
     }
     .with_context(|| format!("using path {verification_file_name}"))?;

@@ -1,9 +1,8 @@
 use std::fs::{read_to_string, File};
 
 use indexmap::{map::Entry, IndexMap};
+use poke_instrument::profile_scope;
 use thiserror::Error;
-
-use crate::profile_scope;
 
 pub struct JsonNumber(pub f64);
 

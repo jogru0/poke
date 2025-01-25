@@ -122,6 +122,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
+name = "poke-instrument"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "thousands",
+]
+
+[[package]]
 name = "poke-part1"
 version = "0.1.0"
 dependencies = [
@@ -140,15 +148,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitpatterns",
- "derive_more",
  "indexmap",
  "itertools",
+ "poke-instrument",
  "rand",
  "rand_chacha",
  "serde",
  "serde_json",
  "thiserror",
- "thousands",
 ]
 
 [[package]]

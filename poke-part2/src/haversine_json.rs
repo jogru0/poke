@@ -1,9 +1,7 @@
 use anyhow::bail;
+use poke_instrument::profile_function;
 
-use crate::{
-    json::{JsonList, JsonNumber, JsonObject, JsonValue},
-    profile_function,
-};
+use crate::json::{JsonList, JsonNumber, JsonObject, JsonValue};
 
 pub struct HaversineInstance {
     pub x0: f64,

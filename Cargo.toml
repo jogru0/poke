@@ -1,4 +1,9 @@
 [workspace]
 resolver = "2"
 
-members = ["poke-part1", "poke-part2"]
+members = ["poke-part1", "poke-part2", "poke-instrument"]
+
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

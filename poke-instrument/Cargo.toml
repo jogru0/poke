@@ -1,0 +1,13 @@
+[package]
+name = "poke-instrument"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+derive_more = { version = "1.0.0", features = ["add"] }
+thousands = "0.2.0"
+
+[features]
+instrument-basic = []
+instrument-off = []
+instrument-main = []
