@@ -148,6 +148,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitpatterns",
+ "derive_more",
  "indexmap",
  "itertools",
  "poke-instrument",

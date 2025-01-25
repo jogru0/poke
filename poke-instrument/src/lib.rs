@@ -85,6 +85,7 @@ impl AbsoluteCycles {
     }
 }
 
+#[derive(Clone)]
 struct Anchor {
     elapsed_leaf: Cell<Cycles>,
     elapsed_root: Cell<Cycles>,
@@ -92,7 +93,18 @@ struct Anchor {
     hits_total: Cell<u64>,
 }
 
-#[derive(Clone, Copy, derive_more::Add, derive_more::Sub, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    derive_more::Add,
+    derive_more::Sub,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    derive_more::Sum,
+    derive_more::Neg,
+)]
 struct Cycles(Wrapping<u64>);
 
 #[derive(Clone, Copy)]
@@ -165,6 +177,48 @@ thread_local! {
 
 }
 
+fn print_statistic_for_anchor(
+    anchor: &Anchor,
+    name: &str,
+    frequency: Frequency,
+    total_cycles: Cycles,
+    max_string_length: usize,
+) {
+    print!(
+        "{:>2.0}% {:<n$} : {:>5.2}",
+        100.0 / total_cycles.0 .0 as f64 * anchor.elapsed_leaf.get().0 .0 as f64,
+        name,
+        anchor.elapsed_leaf.get().display(frequency),
+        n = max_string_length
+    );
+
+    if anchor.elapsed_root.get() != anchor.elapsed_leaf.get() {
+        print!(" / {:>5.2}", anchor.elapsed_root.get().display(frequency));
+    } else {
+        print!("         ");
+    }
+
+    let processed_bytes = anchor.data_root.get();
+    if processed_bytes != 0 {
+        print!(
+            " [{:>4.0} MiB @ {:.2} GiB/s]",
+            anchor.data_root.get() as f64 / (1024.0 * 1024.0),
+            processed_bytes as f64
+                / (1024.0 * 1024.0 * 1024.0)
+                / anchor.elapsed_root.get().in_seconds(frequency)
+        )
+    }
+
+    if anchor.hits_total.get() != 1 {
+        print!(
+            " {{{}x}}",
+            anchor.hits_total.get().separate_with_underscores()
+        )
+    }
+
+    println!();
+}
+
 fn print_statistics(frequency: Frequency) {
     assert!(ACTIVE.get().is_none());
     println!(
@@ -172,52 +226,31 @@ fn print_statistics(frequency: Frequency) {
         frequency.cycles_per_second / 1_000_000.0
     );
 
-    let max_string_length = NAMES
-        .with(|array| {
-            array
+    let mut names_anchors = NAMES.with(|names| {
+        ANCHORS.with(|anchors| {
+            names
                 .iter()
-                .filter_map(|val| val.get().map(|name| name.len()))
-                .max()
+                .enumerate()
+                .filter_map(|(i, val)| val.get().map(|name| (*name, anchors[i].clone())))
+                .collect::<Vec<_>>()
         })
+    });
+
+    names_anchors.sort_unstable_by_key(|(_, anchor)| -anchor.elapsed_leaf.get());
+
+    let max_string_length = names_anchors
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
         .unwrap();
 
-    for i in 0..MAX_ANCHORS {
-        if let Some(name) = NAMES.with(|array| array[i].get().copied()) {
-            ANCHORS.with(|anchors| {
-                let anchor = &anchors[i];
+    let total_cycles: Cycles = names_anchors
+        .iter()
+        .map(|(_, anchor)| anchor.elapsed_leaf.get())
+        .sum();
 
-                print!(
-                    "{:<n$} : {:>5.2}",
-                    name,
-                    anchor.elapsed_leaf.get().display(frequency),
-                    n = max_string_length
-                );
-
-                if anchor.elapsed_root.get() != anchor.elapsed_leaf.get() {
-                    print!(" / {:>5.2}", anchor.elapsed_root.get().display(frequency));
-                } else {
-                    print!("         ");
-                }
-
-                if anchor.data_root.get() != 0 {
-                    print!(
-                        " [{:.2} GiB/s]",
-                        anchor.data_root.get() as f64
-                            / (1024.0 * 1024.0 * 1024.0)
-                            / anchor.elapsed_root.get().in_seconds(frequency)
-                    )
-                }
-
-                if anchor.hits_total.get() != 1 {
-                    print!(
-                        " {{{}x}}",
-                        anchor.hits_total.get().separate_with_underscores()
-                    )
-                }
-
-                println!();
-            });
-        }
+    for (name, anchor) in names_anchors {
+        print_statistic_for_anchor(&anchor, name, frequency, total_cycles, max_string_length);
     }
 }
 

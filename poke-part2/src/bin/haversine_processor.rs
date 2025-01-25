@@ -4,7 +4,9 @@ use anyhow::{Context, Ok};
 use itertools::Itertools;
 use poke_instrument::{profile_main, profile_scope};
 use poke_part2::{
-    haversine::reference_haversine, haversine_json::to_haversine_instances, json::load_json_file,
+    haversine::reference_haversine,
+    haversine_json::{to_haversine_instances, HaversineInstance},
+    json::load_json_file,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -23,7 +25,10 @@ fn main() -> anyhow::Result<()> {
     let amount = instances.len();
 
     let results = {
-        profile_scope!("haversine loop");
+        profile_scope!(
+            "haversine loop",
+            (amount * size_of::<HaversineInstance>()) as u64
+        );
 
         let iter = instances.into_iter().map(|instance| {
             reference_haversine(

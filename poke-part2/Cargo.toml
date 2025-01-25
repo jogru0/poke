@@ -16,3 +16,4 @@ thiserror = "2.0.10"
 poke-instrument = { path = "../poke-instrument", features = [
     "instrument-basic",
 ] }
+derive_more = { version = "1.0.0", features = ["not", "sum"] }
